@@ -2764,6 +2764,7 @@ describe("_setupFileHandlers inner callbacks", () => {
             )
         };
         let projectData = "latest original data";
+        const replacementOrder = [];
         const saveLocally = jest.fn(() => {
             storage["SESSION" + storage.currentProject] = projectData;
         });
@@ -2773,7 +2774,11 @@ describe("_setupFileHandlers inner callbacks", () => {
         });
         const blocks = {
             ...makeActivity().blocks,
+            disposeTrashedBlocks: jest.fn(() => {
+                replacementOrder.push("dispose-trash");
+            }),
             loadNewBlocks: jest.fn(() => {
+                replacementOrder.push("load-import");
                 projectData = "new imported data";
                 return 7;
             })
@@ -2786,7 +2791,13 @@ describe("_setupFileHandlers inner callbacks", () => {
             saveSessionAsync,
             sessionStorageManager
         });
-        activity.sendAllToTrash = jest.fn(() => stage.dispatchEvent("trashsignal"));
+        activity.blocks.trashStacks = ["0"];
+        activity.blocks.actionHistory = [{ type: "trash", blockId: 0 }];
+        activity.blocks.redoActionHistory = [{ type: "restore", blockId: 0 }];
+        activity.sendAllToTrash = jest.fn(() => {
+            replacementOrder.push("send-to-trash");
+            stage.dispatchEvent("trashsignal");
+        });
         const handlers = captureHandlers(activity);
         const pm = new ProjectManager(activity);
         pm._setupFileHandlers();
@@ -2794,6 +2805,10 @@ describe("_setupFileHandlers inner callbacks", () => {
         activity.fileChooser.files = [{ name: "student-song.tb" }];
         handlers.change();
         await jest.advanceTimersByTimeAsync(200);
+        expect(replacementOrder).toEqual(["send-to-trash", "dispose-trash", "load-import"]);
+        expect(activity.blocks.trashStacks).toEqual([]);
+        expect(activity.blocks.actionHistory).toEqual([]);
+        expect(activity.blocks.redoActionHistory).toEqual([]);
 
         expect(storage["SESSIONOriginal Project"]).toBe("latest original data");
         expect(storage.currentProject).toBe("student-song 3");

@@ -308,6 +308,22 @@ describe("PlanetInterface", () => {
         expect(mockActivity.blocks.redoActionHistory).toEqual([]);
     });
 
+    test("_resetTrashHistory disposes trashed blocks and clears project history", () => {
+        mockActivity.blocks.disposeTrashedBlocks = jest.fn();
+
+        mockActivity.blocks.trashStacks = ["0", "3"];
+        mockActivity.blocks.actionHistory = [{ type: "trash", blockId: 0 }];
+        mockActivity.blocks.redoActionHistory = [{ type: "trash", blockId: 3 }];
+
+        planetInterface._resetTrashHistory();
+
+        expect(mockActivity.blocks.disposeTrashedBlocks).toHaveBeenCalledTimes(1);
+
+        expect(mockActivity.blocks.trashStacks).toEqual([]);
+        expect(mockActivity.blocks.actionHistory).toEqual([]);
+        expect(mockActivity.blocks.redoActionHistory).toEqual([]);
+    });
+
     test("loadProjectFromData keeps the trash history when merging", () => {
         planetInterface.closePlanet = jest.fn();
         mockActivity.blocks.trashStacks = ["3"];
