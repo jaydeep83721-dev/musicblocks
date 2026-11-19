@@ -360,11 +360,11 @@ describe("PlanetInterface", () => {
         mockActivity.blocks.loadNewBlocks.mockClear();
 
         planetInterface.getCurrentProjectName = jest.fn(() => "foo");
-        planetInterface.loadProjectFromData(JSON.stringify({ whatever: 1 }));
+        planetInterface.loadProjectFromData(JSON.stringify([{ whatever: 1 }]));
         expect(mockActivity.sendAllToTrash).toHaveBeenCalledWith(false, true);
         expect(mockActivity.textMsg).toHaveBeenCalledWith("foo");
         expect(mockActivity.loading).toBe(false);
-        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledWith({ whatever: 1 });
+        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledWith([{ whatever: 1 }]);
         expect(document.body.style.cursor).toBe("default");
     });
 
@@ -1444,6 +1444,8 @@ describe("PlanetInterface", () => {
         planetInterface.iframe = { style: { display: "" } };
         planetInterface.getCurrentProjectName = jest.fn(() => "Test Project");
 
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(42);
+
         mockActivity.keyboardEnableFlag = 0;
 
         planetInterface.loadProjectFromData('[{"test": 1}]');
@@ -1451,7 +1453,7 @@ describe("PlanetInterface", () => {
         // Keyboard must remain disabled until loading finishes.
         expect(mockActivity.keyboardEnableFlag).toBe(0);
 
-        global.pubsub.emit("finishedLoading");
+        global.pubsub.emit("finishedLoading", { token: 42 });
 
         // Keyboard should work after loading.
         expect(mockActivity.keyboardEnableFlag).toBe(1);
@@ -1628,6 +1630,35 @@ describe("PlanetInterface", () => {
         global.pubsub.emit("finishedLoading", { token: 42 });
 
         expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("restores keyboard when Planet receives invalid non-array project data", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Invalid Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Invalid Project");
+
+        mockActivity.keyboardEnableFlag = 1;
+        mockActivity.errorMsg.mockClear();
+        mockActivity.blocks.loadNewBlocks.mockClear();
+
+        // Simulate another load already being active.
+        mockActivity.blocks._loadInProgress = true;
+
+        planetInterface.loadProjectFromData("{}");
+
+        // Invalid data must never reach the block loader.
+        expect(mockActivity.blocks.loadNewBlocks).not.toHaveBeenCalled();
+
+        // An error should be reported.
+        expect(mockActivity.errorMsg).toHaveBeenCalled();
+
+        // Keyboard must not remain disabled.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+
+        delete mockActivity.blocks._loadInProgress;
     });
 
     it("loadProjectFromData catches JSON parse errors and calls activity.errorMsg", () => {

@@ -258,6 +258,8 @@ class PlanetInterface {
                         (Array.isArray(obj) && obj.length === 0)
                     ) {
                         setExpectedToken(this.activity.justLoadStart());
+                    } else if (!Array.isArray(obj)) {
+                        throw new Error("Cannot load project: invalid project structure.");
                     } else {
                         const loadToken = this.activity.blocks.loadNewBlocks(obj);
                         setExpectedToken(loadToken);

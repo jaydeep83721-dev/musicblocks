@@ -3822,6 +3822,71 @@ describe("Blocks Foundation", () => {
             expect(blocks._lastLoadFailed).toBe(true);
         });
 
+        it("emits loadFailed when a queued load throws in its first chunk", () => {
+            const thrownError = new Error("queued first chunk failure");
+
+            blocks._processOneBlock = jest.fn(() => {
+                throw thrownError;
+            });
+
+            const loadFailedEvents = [];
+            global.pubsub.on("loadFailed", payload => {
+                loadFailedEvents.push(payload);
+            });
+
+            // Simulate another project load already being active.
+            blocks._loadInProgress = true;
+
+            // This request is queued, so the original caller returns normally.
+            const queuedToken = blocks.loadNewBlocks(makeBatch(2));
+
+            expect(blocks._processOneBlock).not.toHaveBeenCalled();
+
+            // The previous load finishes and starts the queued request.
+            expect(() => blocks._advanceLoadQueue()).toThrow(thrownError);
+
+            // The queued request needs its own failure notification.
+            expect(loadFailedEvents).toHaveLength(1);
+            expect(loadFailedEvents[0]).toEqual({
+                token: queuedToken,
+                error: thrownError
+            });
+
+            expect(blocks._lastLoadFailed).toBe(true);
+            expect(blocks._loadInProgress).toBe(false);
+        });
+
+        it("does not misattribute nested queued failures to earlier load tokens", () => {
+            const thrownError = new Error("third project failed");
+            const secondError = new Error("second project failed");
+
+            blocks._processOneBlock = jest.fn((b, blockObjs) => {
+                if (blockObjs[0][0] === 200) {
+                    throw thrownError;
+                }
+                throw secondError;
+            });
+
+            const failures = [];
+            global.pubsub.on("loadFailed", payload => failures.push(payload));
+
+            blocks._loadInProgress = true;
+
+            const secondBatch = [[100, "forward", 0, 0, [null, null, null]]];
+            const thirdBatch = [[200, "forward", 0, 0, [null, null, null]]];
+
+            const secondToken = blocks.loadNewBlocks(secondBatch);
+            const thirdToken = blocks.loadNewBlocks(thirdBatch);
+
+            expect(() => blocks._advanceLoadQueue()).toThrow();
+
+            expect(failures).toHaveLength(2);
+            expect(failures.map(event => event.token)).toEqual([thirdToken, secondToken]);
+            expect(failures[0].error).toBe(thrownError);
+            expect(failures[1].error).toBe(secondError);
+            expect(blocks._loadInProgress).toBe(false);
+        });
+
         it("tags 'finishedLoading' with the load's token, like 'loadFailed'", async () => {
             // A listener scoped to one particular loadNewBlocks() call (e.g.
             // ProjectManager._loadStart()'s recovery watcher) needs this to
