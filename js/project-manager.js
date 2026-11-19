@@ -399,7 +399,7 @@ class ProjectManager {
     }
 
     justLoadStart() {
-        this.activity.blocks.loadNewBlocks(DATAOBJS);
+        return this.activity.blocks.loadNewBlocks(DATAOBJS);
     }
 
     async _loadStart(that) {
