@@ -193,7 +193,10 @@ class PlanetInterface {
                 // A load may complete synchronously before its token
                 // has been returned to the caller.
                 if (!tokenKnown) {
-                    pendingEvents.push(payload);
+                    pendingEvents.push({
+                        type: "finishedLoading",
+                        payload
+                    });
                     return;
                 }
 
@@ -214,9 +217,14 @@ class PlanetInterface {
                 expectedToken = token;
                 tokenKnown = true;
 
-                // Handle completion events emitted synchronously.
-                for (const payload of pendingEvents) {
-                    __afterLoad(payload);
+                // Replay synchronous completion and failure events
+                // after the loader returns the request's token.
+                for (const event of pendingEvents) {
+                    if (event.type === "finishedLoading") {
+                        __afterLoad(event.payload);
+                    } else if (event.type === "loadFailed") {
+                        __onLoadFailed(event.payload);
+                    }
                 }
                 pendingEvents.length = 0;
             };
@@ -224,8 +232,17 @@ class PlanetInterface {
             pubsub.on("finishedLoading", __afterLoad);
 
             const __onLoadFailed = payload => {
+                // A synchronous failure may arrive before the token is returned.
+                if (!tokenKnown) {
+                    pendingEvents.push({
+                        type: "loadFailed",
+                        payload
+                    });
+                    return;
+                }
+
                 // Ignore failures from unrelated project loads.
-                if (!tokenKnown || payload?.token !== expectedToken) {
+                if (payload?.token !== expectedToken) {
                     return;
                 }
 

@@ -3804,6 +3804,68 @@ describe("Blocks Foundation", () => {
             expect(loadFailedEvents[0].token).toBe(loadToken);
         });
 
+        it("reports both failures when a deferred load and the next queued load throw", async () => {
+            const deferredError = new Error("first project deferred failure");
+            const queuedError = new Error("second project synchronous failure");
+
+            const failures = [];
+            global.pubsub.on("loadFailed", payload => failures.push(payload));
+
+            blocks._processOneBlock = jest.fn((b, blockObjs, blockOffset) => {
+                // The first project fails during its deferred chunk.
+                if (blockObjs.length === 25 && b === 20) {
+                    throw deferredError;
+                }
+
+                // The queued project's first chunk also fails.
+                if (blockObjs.length === 2) {
+                    throw queuedError;
+                }
+
+                const index = blockOffset + b;
+                blocks.blockList[index] = { connections: null, trash: false };
+                blocks._adjustTheseStacks.push(index);
+                setTimeout(() => blocks.cleanupAfterLoad(), 0);
+            });
+
+            const onWindowError = event => event.preventDefault();
+            window.addEventListener("error", onWindowError);
+
+            try {
+                const firstToken = blocks.loadNewBlocks(makeBatch(25));
+                const secondToken = blocks.loadNewBlocks(makeBatch(2));
+
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // Each project must report its own original failure exactly once.
+                expect(failures).toHaveLength(2);
+
+                expect(failures).toEqual(
+                    expect.arrayContaining([
+                        { token: firstToken, error: deferredError },
+                        { token: secondToken, error: queuedError }
+                    ])
+                );
+
+                expect(blocks._loadInProgress).toBe(false);
+            } finally {
+                window.removeEventListener("error", onWindowError);
+            }
+        });
+
+        it("emits loadFailed when invalid block structure aborts a load", () => {
+            const failures = [];
+            global.pubsub.on("loadFailed", payload => failures.push(payload));
+
+            const invalidBatch = [null];
+            const token = blocks.loadNewBlocks(invalidBatch);
+
+            expect(failures).toHaveLength(1);
+            expect(failures[0].token).toBe(token);
+            expect(failures[0].error).toBeInstanceOf(Error);
+            expect(blocks._loadInProgress).toBe(false);
+        });
+
         it("does not emit 'loadFailed' when the first, synchronous chunk throws", () => {
             // The synchronous throw already reaches whatever try/catch
             // called loadNewBlocks() directly, so a listener that also

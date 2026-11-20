@@ -5762,6 +5762,15 @@ class Blocks {
                     // Nothing was loaded, so a waiting save would only store
                     // the cleared workspace over the project.
                     this._afterLoadCallbacks.clear();
+
+                    // Notify the listener associated with this specific load.
+                    // Emit before advancing so subsequent queued loads cannot
+                    // prevent this failure from being reported.
+                    pubsub.emit("loadFailed", {
+                        token: loadToken,
+                        error: new Error(warning)
+                    });
+
                     this._advanceLoadQueue();
                 };
 
@@ -6578,11 +6587,25 @@ class Blocks {
                             } catch (e) {
                                 this.activity._suppressRefresh = false;
                                 this._lastLoadFailed = true;
-                                this._advanceLoadQueue();
+
+                                // Notify this load's listeners before starting the next queued
+                                // load, which may itself fail synchronously.
                                 pubsub.emit("loadFailed", {
                                     token: loadToken,
                                     error: e
                                 });
+
+                                try {
+                                    this._advanceLoadQueue();
+                                } catch (queueError) {
+                                    // Keep the original deferred failure from being replaced
+                                    // by an error from a later queued project.
+                                    console.error(
+                                        "A subsequent queued project load failed:",
+                                        queueError
+                                    );
+                                }
+
                                 throw e;
                             }
                         }, 0);

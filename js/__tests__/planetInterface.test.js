@@ -1661,6 +1661,36 @@ describe("PlanetInterface", () => {
         delete mockActivity.blocks._loadInProgress;
     });
 
+    it("restores keyboard after a synchronous token-scoped load failure", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Broken Project")
+        };
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Broken Project");
+
+        const loadToken = 73;
+        const loadError = new Error("malformed block structure");
+
+        mockActivity.keyboardEnableFlag = 1;
+
+        mockActivity.blocks.loadNewBlocks.mockImplementationOnce(() => {
+            // Failure occurs before loadNewBlocks returns its token.
+            global.pubsub.emit("loadFailed", {
+                token: loadToken,
+                error: loadError
+            });
+
+            return loadToken;
+        });
+
+        planetInterface.loadProjectFromData(
+            JSON.stringify([[0, "forward", 0, 0, [null, null, null]]])
+        );
+
+        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledTimes(1);
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
     it("loadProjectFromData catches JSON parse errors and calls activity.errorMsg", () => {
         planetInterface.iframe = { style: { display: "" } };
         planetInterface.getCurrentProjectName = jest.fn(() => "foo");
