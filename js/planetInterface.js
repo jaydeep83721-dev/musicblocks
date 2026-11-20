@@ -173,6 +173,11 @@ class PlanetInterface {
             }
             this.activity.textMsg(this.getCurrentProjectName());
             this.activity.loading = true;
+            this.activity.keyboardEnableFlag = 0;
+            const loadGeneration = (this._keyboardLoadGeneration =
+                (this._keyboardLoadGeneration || 0) + 1);
+
+            const isCurrentLoad = () => this._keyboardLoadGeneration === loadGeneration;
             document.body.style.cursor = "wait";
             this.activity.doLoadAnimation();
             this.activity._allClear(false, true);
@@ -180,11 +185,78 @@ class PlanetInterface {
             // First, hide the palettes as they will need updating.
             this.activity.blocks.palettes._hideMenus(true);
 
-            const __afterLoad = () => {
+            let expectedToken;
+            let tokenKnown = false;
+            const pendingEvents = [];
+
+            const __afterLoad = payload => {
+                // A load may complete synchronously before its token
+                // has been returned to the caller.
+                if (!tokenKnown) {
+                    pendingEvents.push({
+                        type: "finishedLoading",
+                        payload
+                    });
+                    return;
+                }
+
+                // Ignore completion events from unrelated loads.
+                if (payload?.token !== expectedToken) {
+                    return;
+                }
+
+                if (isCurrentLoad()) {
+                    this.activity.keyboardEnableFlag = 1;
+                }
+
                 pubsub.off("finishedLoading", __afterLoad);
+                pubsub.off("loadFailed", __onLoadFailed);
+            };
+
+            const setExpectedToken = token => {
+                expectedToken = token;
+                tokenKnown = true;
+
+                // Replay synchronous completion and failure events
+                // after the loader returns the request's token.
+                for (const event of pendingEvents) {
+                    if (event.type === "finishedLoading") {
+                        __afterLoad(event.payload);
+                    } else if (event.type === "loadFailed") {
+                        __onLoadFailed(event.payload);
+                    }
+                }
+                pendingEvents.length = 0;
             };
 
             pubsub.on("finishedLoading", __afterLoad);
+
+            const __onLoadFailed = payload => {
+                // A synchronous failure may arrive before the token is returned.
+                if (!tokenKnown) {
+                    pendingEvents.push({
+                        type: "loadFailed",
+                        payload
+                    });
+                    return;
+                }
+
+                // Ignore failures from unrelated project loads.
+                if (payload?.token !== expectedToken) {
+                    return;
+                }
+
+                // Remove both listeners to prevent stale callbacks.
+                pubsub.off("finishedLoading", __afterLoad);
+                pubsub.off("loadFailed", __onLoadFailed);
+
+                // Restore keyboard after the failed load.
+                if (isCurrentLoad()) {
+                    this.activity.keyboardEnableFlag = 1;
+                }
+            };
+
+            pubsub.on("loadFailed", __onLoadFailed);
 
             try {
                 if (
@@ -194,7 +266,7 @@ class PlanetInterface {
                     data === "[]" ||
                     (typeof data === "string" && data.trim() === "")
                 ) {
-                    this.activity.justLoadStart();
+                    setExpectedToken(this.activity.justLoadStart());
                 } else {
                     const obj = typeof data === "string" ? JSON.parse(data) : data;
                     if (
@@ -202,12 +274,20 @@ class PlanetInterface {
                         obj === undefined ||
                         (Array.isArray(obj) && obj.length === 0)
                     ) {
-                        this.activity.justLoadStart();
+                        setExpectedToken(this.activity.justLoadStart());
+                    } else if (!Array.isArray(obj)) {
+                        throw new Error("Cannot load project: invalid project structure.");
                     } else {
-                        this.activity.blocks.loadNewBlocks(obj);
+                        const loadToken = this.activity.blocks.loadNewBlocks(obj);
+                        setExpectedToken(loadToken);
                     }
                 }
             } catch (e) {
+                pubsub.off("finishedLoading", __afterLoad);
+                pubsub.off("loadFailed", __onLoadFailed);
+                if (isCurrentLoad()) {
+                    this.activity.keyboardEnableFlag = 1;
+                }
                 this.activity.errorMsg(e);
             }
 

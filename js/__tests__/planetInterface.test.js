@@ -360,11 +360,11 @@ describe("PlanetInterface", () => {
         mockActivity.blocks.loadNewBlocks.mockClear();
 
         planetInterface.getCurrentProjectName = jest.fn(() => "foo");
-        planetInterface.loadProjectFromData(JSON.stringify({ whatever: 1 }));
+        planetInterface.loadProjectFromData(JSON.stringify([{ whatever: 1 }]));
         expect(mockActivity.sendAllToTrash).toHaveBeenCalledWith(false, true);
         expect(mockActivity.textMsg).toHaveBeenCalledWith("foo");
         expect(mockActivity.loading).toBe(false);
-        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledWith({ whatever: 1 });
+        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledWith([{ whatever: 1 }]);
         expect(document.body.style.cursor).toBe("default");
     });
 
@@ -1435,6 +1435,260 @@ describe("PlanetInterface", () => {
         global.pubsub.emit("finishedLoading");
         expect(offSpy).toHaveBeenCalledWith("finishedLoading", expect.any(Function));
         offSpy.mockRestore();
+    });
+
+    it("enables keyboard after a Planet project finishes loading", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Test Project")
+        };
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Test Project");
+
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(42);
+
+        mockActivity.keyboardEnableFlag = 0;
+
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        // Keyboard must remain disabled until loading finishes.
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        global.pubsub.emit("finishedLoading", { token: 42 });
+
+        // Keyboard should work after loading.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("does not enable keyboard for an unrelated project load", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Test Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Test Project");
+
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(42);
+        mockActivity.keyboardEnableFlag = 0;
+
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // Another project's loading completes first.
+        global.pubsub.emit("finishedLoading", { token: 99 });
+
+        // Keyboard must remain disabled.
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // Our Planet project finishes.
+        global.pubsub.emit("finishedLoading", { token: 42 });
+
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("enables keyboard after an empty Planet project finishes loading", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Empty Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Empty Project");
+
+        mockActivity.justLoadStart.mockReturnValueOnce(42);
+        mockActivity.keyboardEnableFlag = 0;
+
+        planetInterface.loadProjectFromData("[]");
+
+        // Keyboard stays disabled until this load completes.
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // An unrelated load must not enable keyboard input.
+        global.pubsub.emit("finishedLoading", { token: 99 });
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // The empty project's own completion enables it.
+        global.pubsub.emit("finishedLoading", { token: 42 });
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("enables keyboard when a Planet load finishes synchronously", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Fast Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Fast Project");
+
+        mockActivity.keyboardEnableFlag = 0;
+
+        mockActivity.blocks.loadNewBlocks.mockImplementationOnce(() => {
+            global.pubsub.emit("finishedLoading", { token: 42 });
+            return 42;
+        });
+
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("disables keyboard while a new Planet project loads", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Next Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Next Project");
+
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(42);
+
+        // Keyboard is enabled from the previous project.
+        mockActivity.keyboardEnableFlag = 1;
+
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        // Keyboard should be disabled during loading.
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        global.pubsub.emit("finishedLoading", { token: 42 });
+
+        // Keyboard should work again after loading.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("restores keyboard after invalid Planet project data", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Broken Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Broken Project");
+
+        mockActivity.keyboardEnableFlag = 1;
+        mockActivity.errorMsg.mockClear();
+
+        planetInterface.loadProjectFromData("invalid json");
+
+        expect(mockActivity.errorMsg).toHaveBeenCalledWith(expect.any(SyntaxError));
+
+        // No project was loaded, so keyboard input should be usable.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("restores keyboard after an asynchronous Planet load failure", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Broken Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Broken Project");
+
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(42);
+        mockActivity.keyboardEnableFlag = 1;
+
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        global.pubsub.emit("loadFailed", {
+            token: 42,
+            error: new Error("Deferred block loading failed")
+        });
+
+        // The failed load must not leave keyboard input disabled.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("keeps keyboard disabled until the newest Planet load finishes", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Test Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Test Project");
+
+        mockActivity.blocks.loadNewBlocks.mockReturnValueOnce(41).mockReturnValueOnce(42);
+
+        mockActivity.keyboardEnableFlag = 1;
+
+        // Start project A.
+        planetInterface.loadProjectFromData('[{"test": 1}]');
+
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // Start project B before project A finishes.
+        planetInterface.loadProjectFromData('[{"test": 2}]');
+
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // Project A finishes first.
+        global.pubsub.emit("finishedLoading", { token: 41 });
+
+        // Project B is still loading.
+        expect(mockActivity.keyboardEnableFlag).toBe(0);
+
+        // Project B finishes.
+        global.pubsub.emit("finishedLoading", { token: 42 });
+
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+    });
+
+    it("restores keyboard when Planet receives invalid non-array project data", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Invalid Project")
+        };
+
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Invalid Project");
+
+        mockActivity.keyboardEnableFlag = 1;
+        mockActivity.errorMsg.mockClear();
+        mockActivity.blocks.loadNewBlocks.mockClear();
+
+        // Simulate another load already being active.
+        mockActivity.blocks._loadInProgress = true;
+
+        planetInterface.loadProjectFromData("{}");
+
+        // Invalid data must never reach the block loader.
+        expect(mockActivity.blocks.loadNewBlocks).not.toHaveBeenCalled();
+
+        // An error should be reported.
+        expect(mockActivity.errorMsg).toHaveBeenCalled();
+
+        // Keyboard must not remain disabled.
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
+
+        delete mockActivity.blocks._loadInProgress;
+    });
+
+    it("restores keyboard after a synchronous token-scoped load failure", () => {
+        mockActivity.planet = {
+            getCurrentProjectName: jest.fn(() => "Broken Project")
+        };
+        planetInterface.iframe = { style: { display: "" } };
+        planetInterface.getCurrentProjectName = jest.fn(() => "Broken Project");
+
+        const loadToken = 73;
+        const loadError = new Error("malformed block structure");
+
+        mockActivity.keyboardEnableFlag = 1;
+
+        mockActivity.blocks.loadNewBlocks.mockImplementationOnce(() => {
+            // Failure occurs before loadNewBlocks returns its token.
+            global.pubsub.emit("loadFailed", {
+                token: loadToken,
+                error: loadError
+            });
+
+            return loadToken;
+        });
+
+        planetInterface.loadProjectFromData(
+            JSON.stringify([[0, "forward", 0, 0, [null, null, null]]])
+        );
+
+        expect(mockActivity.blocks.loadNewBlocks).toHaveBeenCalledTimes(1);
+        expect(mockActivity.keyboardEnableFlag).toBe(1);
     });
 
     it("loadProjectFromData catches JSON parse errors and calls activity.errorMsg", () => {

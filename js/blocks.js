@@ -5649,7 +5649,19 @@ class Blocks {
             if (this._loadQueue.length > 0) {
                 const next = this._loadQueue.shift();
                 this._loadInProgress = true;
-                this._loadNewBlocksNow(next.blockObjs, next.loadToken);
+
+                try {
+                    this._loadNewBlocksNow(next.blockObjs, next.loadToken);
+                } catch (error) {
+                    // A queued load can fail after its original caller has returned.
+                    // Notify token-scoped listeners so they can recover.
+                    pubsub.emit("loadFailed", {
+                        token: next.loadToken,
+                        error
+                    });
+                    throw error;
+                }
+
                 return;
             }
 
@@ -5750,6 +5762,15 @@ class Blocks {
                     // Nothing was loaded, so a waiting save would only store
                     // the cleared workspace over the project.
                     this._afterLoadCallbacks.clear();
+
+                    // Notify the listener associated with this specific load.
+                    // Emit before advancing so subsequent queued loads cannot
+                    // prevent this failure from being reported.
+                    pubsub.emit("loadFailed", {
+                        token: loadToken,
+                        error: new Error(warning)
+                    });
+
                     this._advanceLoadQueue();
                 };
 
@@ -6566,11 +6587,25 @@ class Blocks {
                             } catch (e) {
                                 this.activity._suppressRefresh = false;
                                 this._lastLoadFailed = true;
-                                this._advanceLoadQueue();
+
+                                // Notify this load's listeners before starting the next queued
+                                // load, which may itself fail synchronously.
                                 pubsub.emit("loadFailed", {
                                     token: loadToken,
                                     error: e
                                 });
+
+                                try {
+                                    this._advanceLoadQueue();
+                                } catch (queueError) {
+                                    // Keep the original deferred failure from being replaced
+                                    // by an error from a later queued project.
+                                    console.error(
+                                        "A subsequent queued project load failed:",
+                                        queueError
+                                    );
+                                }
+
                                 throw e;
                             }
                         }, 0);
@@ -6590,13 +6625,15 @@ class Blocks {
             } catch (e) {
                 this.activity._suppressRefresh = false;
                 this._lastLoadFailed = true;
-                this._advanceLoadQueue();
-                // Not emitting "loadFailed" here: this catch only ever runs
-                // for the first, synchronous chunk, so the throw below
-                // already reaches whatever try/catch called loadNewBlocks()
-                // directly (that recovery path works today). Only the
-                // deferred-chunk catch above needs the event, since its
-                // throw has no such caller to reach (issue #8855).
+
+                try {
+                    this._advanceLoadQueue();
+                } catch (queueError) {
+                    // Preserve the current load's original error if
+                    // advancing the queue also throws.
+                    console.error("A subsequent queued project load failed:", queueError);
+                }
+
                 throw e;
             }
         };
